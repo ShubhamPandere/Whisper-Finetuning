@@ -1,0 +1,118 @@
+import os
+import torch
+import librosa
+import numpy as np
+from pathlib import Path
+from transformers import WhisperProcessor, WhisperForConditionalGeneration
+from peft import PeftModel
+from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+
+class ASREngine:
+    def __init__(self, model_name="openai/whisper-small"):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model_name = model_name
+        
+        print(f"Loading Base Model: {model_name}...")
+        self.processor = WhisperProcessor.from_pretrained(model_name)
+        self.base_model = WhisperForConditionalGeneration.from_pretrained(model_name).to(self.device)
+        self.base_model.eval()
+        self.current_model = self.base_model
+        
+        # Silero VAD
+        self.vad_model, self.vad_utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False)
+        (self.get_speech_timestamps, _, self.read_audio, _, _) = self.vad_utils
+        
+        # Adapters Cache
+        self.loaded_adapters = {} # {lang_code: PeftModel}
+
+    def load_adapter(self, lang_code, adapter_path):
+        if lang_code not in self.loaded_adapters:
+            print(f"Loading Adapter for {lang_code} from {adapter_path}...")
+            if not Path(adapter_path).exists():
+                raise FileNotFoundError(f"Adapter not found at {adapter_path}")
+            
+            # Load the adapter onto the base model
+            self.loaded_adapters[lang_code] = PeftModel.from_pretrained(self.base_model, adapter_path, adapter_name=lang_code)
+        
+        self.current_model = self.loaded_adapters[lang_code]
+        self.current_model.set_adapter(lang_code)
+        self.current_model.eval()
+
+    def use_base_model(self):
+        self.current_model = self.base_model
+        self.current_model.eval()
+
+    def denoise_audio(self, audio):
+        print("Enhancing Speech: Reducing noise...")
+        import noisereduce as nr
+        # We assume the first 0.5s is silence/noise for the profile
+        return nr.reduce_noise(y=audio, sr=16000, prop_decrease=0.8)
+
+    def preprocess_audio(self, audio_path, apply_vad=True, apply_denoise=True):
+        # Load audio at 16kHz
+        audio, sr = librosa.load(audio_path, sr=16000)
+        audio = audio.astype(np.float32, copy=False)
+        
+        if apply_vad:
+            # Silero VAD expects a torch tensor
+            wav = torch.from_numpy(audio)
+            speech_timestamps = self.get_speech_timestamps(wav, self.vad_model, sampling_rate=16000)
+            
+            if speech_timestamps:
+                # Concatenate speech segments
+                segments = []
+                for ts in speech_timestamps:
+                    segments.append(audio[ts['start']:ts['end']])
+                audio = np.concatenate(segments)
+
+        if apply_denoise and len(audio) > 0:
+            # Denoise only after trimming silence so we avoid learning stationary noise from long pauses.
+            audio = self.denoise_audio(audio)
+        
+        # Final Volume Normalization
+        audio = librosa.util.normalize(audio)
+        return audio
+
+    def transcribe(self, audio, language_code, task="transcribe"):
+        # Whisper has a 30-second limit. We need to chunk long audio.
+        chunk_length_s = 30
+        chunk_samples = chunk_length_s * 16000
+        full_transcription = []
+        
+        # Iterate through audio in simple chunks so we preserve the full conversation.
+        for i in range(0, len(audio), chunk_samples):
+            chunk = audio[i : i + chunk_samples]
+            if len(chunk) < 1600:
+                continue
+            
+            input_features = self.processor(chunk, sampling_rate=16000, return_tensors="pt").input_features.to(self.device)
+            forced_decoder_ids = self.processor.get_decoder_prompt_ids(language=language_code, task=task)
+            
+            with torch.no_grad():
+                predicted_ids = self.current_model.generate(
+                    input_features, 
+                    forced_decoder_ids=forced_decoder_ids,
+                    max_new_tokens=256
+                )
+                
+            chunk_text = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+            if chunk_text.strip():
+                full_transcription.append(chunk_text.strip())
+            
+        return " ".join(full_transcription).strip()
+
+    def postprocess_text(self, text, lang_code):
+        # Mapping lang_code to indicnlp lang_code
+        # indicnlp uses 'hi' and 'mr'
+        factory = IndicNormalizerFactory()
+        normalizer = factory.get_normalizer(lang_code)
+        return normalizer.normalize(text)
+
+# Singleton instance
+engine = None
+
+def get_engine():
+    global engine
+    if engine is None:
+        engine = ASREngine()
+    return engine
