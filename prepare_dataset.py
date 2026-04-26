@@ -29,8 +29,8 @@ def download_subset(lang_full):
     os.makedirs(clips_dir, exist_ok=True)
 
     print(f"📡 Connecting to Hugging Face for {DATASET_NAME}...")
-    # Added token=True to use your logged-in session if needed
-    ds = load_dataset(DATASET_NAME, lang_config, split="train", streaming=True, token=True)
+    # Added trust_remote_code=True for FLEURS loading script
+    ds = load_dataset(DATASET_NAME, lang_config, split="train", streaming=True, trust_remote_code=True)
     ds = ds.cast_column("audio", Audio(sampling_rate=16000))
 
     all_data = []

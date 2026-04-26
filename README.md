@@ -5,6 +5,7 @@ A research-grade pipeline for fine-tuning OpenAI's Whisper model on Hindi and Ma
 ## 🚀 Features
 - **QLoRA (4-bit) Fine-tuning:** Train Large/Medium models on consumer GPUs (e.g., RTX 4050 6GB).
 - **Advanced Pre-processing:** Integrated **Silero VAD** for silence stripping and **Spectral Denoising** for audio cleaning.
+- **Surgical Speaker Diarization (2026):** A hybrid VAD-First pipeline using **Silero VAD**, **Pyannote Embeddings**, and **Agglomerative Clustering** optimized for Marathi doctor-patient transitions.
 - **IndicNLP Post-processing:** Orthographic normalization for Devanagari script to improve Character Error Rate (CER).
 - **Research Dashboard:** A premium Gradio Web UI for comparing Base vs. Fine-tuned models with visual diff analysis.
 - **Automated Plotting:** Generate Loss and WER curves automatically from training logs.

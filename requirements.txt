@@ -1,16 +1,20 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+
 # PyTorch stack for Windows + CUDA 12.1
 torch==2.2.2+cu121
 torchvision==0.17.2+cu121
-torchaudio==2.2.2+cu121 --index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.2.2+cu121
 
 # Hugging Face stack pinned to a mutually compatible set
 transformers==4.40.2
 tokenizers==0.19.1
-huggingface-hub==0.23.0
+huggingface-hub>=0.25.0
 datasets==2.19.1
 accelerate==0.27.2
 peft==0.10.0
 evaluate==0.4.2
+pyannote.audio==3.1.1
+numpy==1.26.4
 
 # Audio / utility deps
 librosa
@@ -20,9 +24,10 @@ matplotlib
 pandas
 tqdm
 wandb
+python-dotenv
 
 # UI and Post-processing
-gradio
+gradio>=5.1.0
 indic-nlp-library
 morfessor
 onnxruntime
