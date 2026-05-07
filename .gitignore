@@ -5,3 +5,14 @@ plots/
 .env
 .gradio/
 .ipynb_checkpoints/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.log
+venv/
+.venv/
+checkpoint-*/
+results/
+wandb/
+tests/

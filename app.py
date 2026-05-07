@@ -8,7 +8,7 @@ import torch
 from pathlib import Path
 from asr_pipeline import get_engine
 from speaker_diarization import format_diarized_transcript, transcribe_diarized_audio
-import difflib
+# Removed difflib import
 
 # Configuration
 CHECKPOINTS = {
@@ -17,21 +17,7 @@ CHECKPOINTS = {
 }
 
 
-def generate_diff(str1, str2):
-    if str1 == str2:
-        return "✨ No changes needed. Text is already normalized."
-    result = ""
-    codes = difflib.SequenceMatcher(None, str1, str2).get_opcodes()
-    for tag, i1, i2, j1, j2 in codes:
-        if tag == 'equal': result += str1[i1:i2]
-        elif tag == 'replace':
-            result += f"<span style='color: #ff4b4b; text-decoration: line-through;'>{str1[i1:i2]}</span>"
-            result += f"<span style='color: #00ff88; font-weight: bold;'>{str2[j1:j2]}</span>"
-        elif tag == 'delete':
-            result += f"<span style='color: #ff4b4b; text-decoration: line-through;'>{str1[i1:i2]}</span>"
-        elif tag == 'insert':
-            result += f"<span style='color: #00ff88; font-weight: bold;'>{str2[j1:j2]}</span>"
-    return result
+# Removed generate_diff function
 
 def process_audio(
     audio_path,
@@ -41,11 +27,10 @@ def process_audio(
     task_type,
     apply_vad,
     apply_denoise,
-    apply_post,
     use_diarization,
 ):
     if audio_path is None:
-        return "Please record audio.", 0.0, "", "", "", None
+        return "Please record audio.", 0.0, "", None, None
 
     engine = get_engine()
     start_time = time.time()
@@ -78,13 +63,10 @@ def process_audio(
         apply_denoise=apply_denoise,
     )
     raw_text = engine.transcribe(audio, lang_code, task=task_str)
-    
-    final_text = raw_text
-    if apply_post:
-        final_text = engine.postprocess_text(raw_text, lang_code)
 
     diarized_text = ""
     diarized_plot = None
+    diarized_cluster_plot = None
     if use_diarization:
         try:
             diarized_result = transcribe_diarized_audio(
@@ -98,19 +80,14 @@ def process_audio(
             )
             diarized_text = diarized_result["transcript"]
             diarized_plot = diarized_result.get("plot_path")
-
-            if apply_post and diarized_result["segments"]:
-                for segment in diarized_result["segments"]:
-                    segment["text"] = engine.postprocess_text(segment["text"], lang_code)
-                diarized_text = format_diarized_transcript(diarized_result["segments"])
+            diarized_cluster_plot = diarized_result.get("cluster_plot_path")
         except Exception as e:
             diarized_text = f"Speaker diarization failed: {str(e)}"
 
     end_time = time.time()
     duration = round(end_time - start_time, 2)
-    diff_html = generate_diff(raw_text, final_text)
 
-    return raw_text, duration, final_text, diff_html, diarized_text, diarized_plot
+    return raw_text, duration, diarized_text, diarized_plot, diarized_cluster_plot
 
 custom_css = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
@@ -121,8 +98,12 @@ custom_css = """
 #diff-box { background: #111827 !important; padding: 15px !important; border-radius: 10px !important; border-left: 4px solid #3b82f6 !important; }
 """
 
-with gr.Blocks(css=custom_css) as demo:
-    gr.HTML("<h1 class='main-header'>INDIC-MED ASR DASHBOARD</h1>")
+with gr.Blocks() as demo:
+    with gr.Row(variant="compact"):
+        gr.HTML("<h1 class='main-header' style='margin: 0; text-align: left; flex-grow: 8;'>INDIC-MED ASR DASHBOARD</h1>")
+        gr.Image("vnit logo (1).jpg", show_label=False, container=False, width=100, height=100)
+    
+    gr.Markdown("---")
     
     with gr.Row():
         with gr.Column(scale=1, elem_classes="glass-panel"):
@@ -135,7 +116,6 @@ with gr.Blocks(css=custom_css) as demo:
             with gr.Accordion("Advanced Processing", open=False):
                 vad_toggle = gr.Checkbox(label="VAD (Silence Stripping)", value=True)
                 denoise_toggle = gr.Checkbox(label="Spectral Denoising", value=False)
-                post_toggle = gr.Checkbox(label="Orthographic Normalization", value=True)
                 diarize_toggle = gr.Checkbox(label="Speaker Diarization", value=True)
             
             submit_btn = gr.Button("RUN ANALYSIS", variant="primary")
@@ -145,11 +125,11 @@ with gr.Blocks(css=custom_css) as demo:
                 output_time = gr.Number(label="Latency (s)")
                 gr.Markdown("#### Status\n✅ Multi-Model Engine Ready")
             
-            output_raw = gr.Textbox(label="Raw Transcription", lines=4)
-            output_post = gr.Textbox(label="Post-processed Text", lines=4)
-            output_diff = gr.HTML(label="Normalization Proof", elem_id="diff-box")
+            output_raw = gr.Textbox(label="Final Transcription", lines=8)
             output_diarized = gr.Textbox(label="Speaker-Diarized Transcript", lines=12)
-            output_plot = gr.Image(label="Diarization Timeline Plot", type="filepath")
+            with gr.Row():
+                output_plot = gr.Image(label="Diarization Timeline Plot", type="filepath")
+                output_cluster_plot = gr.Image(label="Speaker Clusters (PCA Visualization)", type="filepath")
 
     submit_btn.click(
         fn=process_audio,
@@ -161,11 +141,10 @@ with gr.Blocks(css=custom_css) as demo:
             task_type,
             vad_toggle,
             denoise_toggle,
-            post_toggle,
             diarize_toggle,
         ],
-        outputs=[output_raw, output_time, output_post, output_diff, output_diarized, output_plot]
+        outputs=[output_raw, output_time, output_diarized, output_plot, output_cluster_plot]
     )
 
 if __name__ == "__main__":
-    demo.launch(share=True)
+    demo.launch(share=True, css=custom_css)

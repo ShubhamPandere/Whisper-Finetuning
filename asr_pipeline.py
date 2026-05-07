@@ -9,7 +9,7 @@ from peft import PeftModel
 from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
 
 class ASREngine:
-    def __init__(self, model_name="openai/whisper-small"):
+    def __init__(self, model_name=None):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.current_model_name = None
         self.processor = None
@@ -21,14 +21,15 @@ class ASREngine:
         self.vad_model, self.vad_utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False)
         (self.get_speech_timestamps, _, self.read_audio, _, _) = self.vad_utils
         
-        # Initial Load
-        self.switch_base_model(model_name)
+        # Initial Load if specified
+        if model_name:
+            self.switch_base_model(model_name)
 
     def switch_base_model(self, new_model_name):
         if self.current_model_name == new_model_name:
             return
             
-        print(f"♻️ Flushing VRAM and loading {new_model_name}...")
+        print(f"Flushing VRAM and loading {new_model_name}...", flush=True)
         # Clear existing models from VRAM
         if self.base_model is not None:
             del self.base_model
@@ -54,7 +55,7 @@ class ASREngine:
     def load_adapter(self, lang_code, adapter_path):
         adapter_id = f"{self.current_model_name}_{lang_code}"
         if adapter_id not in self.loaded_adapters:
-            print(f"🎨 Loading Adapter: {adapter_path}...")
+            print(f"Loading Adapter: {adapter_path}...", flush=True)
             if not Path(adapter_path).exists():
                 raise FileNotFoundError(f"Adapter not found at {adapter_path}")
             

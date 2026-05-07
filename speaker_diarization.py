@@ -1,10 +1,14 @@
 import gc
 import os
+import matplotlib
+matplotlib.use('Agg')
 import torch
 import librosa
 import numpy as np
 from typing import Dict, List, Optional
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.decomposition import PCA
+from scipy.spatial import ConvexHull
 
 _PIPELINE = None
 _PIPELINE_TOKEN = None
@@ -84,7 +88,7 @@ def transcribe_diarized_audio(
     from pyannote.audio import Model
     from pyannote.audio.pipelines.utils import get_model
     
-    print("🧠 Extracting speaker embeddings for segments...")
+    print("Extracting speaker embeddings for segments...", flush=True)
     try:
         # Try to load the dedicated embedding model
         model = Model.from_pretrained("pyannote/embedding", use_auth_token=token)
@@ -119,7 +123,7 @@ def transcribe_diarized_audio(
                 embeddings.append(emb)
                 valid_turns.append({"start": start_idx/16000, "end": end_idx/16000})
             except Exception as e:
-                print(f"Skipping segment due to embedding error: {e}")
+                print(f"Skipping segment due to embedding error: {e}", flush=True)
                 continue
 
     if len(embeddings) < 2:
@@ -127,7 +131,7 @@ def transcribe_diarized_audio(
         turns = [{"start": t["start"], "end": t["end"], "speaker": "Speaker_1"} for t in valid_turns]
     else:
         # 4. Clustering (Force exactly 2 speakers)
-        print(f"👥 Clustering {len(embeddings)} segments into 2 speakers...")
+        print(f"Clustering {len(embeddings)} segments into 2 speakers...", flush=True)
         clusterer = AgglomerativeClustering(n_clusters=2, metric='cosine', linkage='average')
         labels = clusterer.fit_predict(embeddings)
         
@@ -147,7 +151,7 @@ def transcribe_diarized_audio(
     gc.collect()
     torch.cuda.empty_cache()
 
-    print(f"📝 Transcribing {len(turns)} diarized segments...")
+    print(f"Transcribing {len(turns)} diarized segments...", flush=True)
     segments = []
     for turn in turns:
         start_idx = int(turn["start"] * 16000)
@@ -163,30 +167,79 @@ def transcribe_diarized_audio(
                 "text": text
             })
 
-    # 6. Generate Plot
+    # 6. Generate Plots
     import matplotlib.pyplot as plt
     from pyannote.core import Annotation, Segment
     
     plot_path = None
+    cluster_plot_path = None
+    
     try:
+        os.makedirs("plots", exist_ok=True)
+        
+        # Plot 1: Timeline
         annotation = Annotation()
         for turn in turns:
             annotation[Segment(turn["start"], turn["end"])] = turn["speaker"]
         
-        fig, ax = plt.subplots(figsize=(10, 4))
+        fig1, ax1 = plt.subplots(figsize=(12, 4))
         from pyannote.core.notebook import notebook
-        notebook.plot_annotation(annotation, ax=ax, time=True, legend=True)
-        ax.set_title("VAD-First Speaker Diarization Timeline")
+        notebook.plot_annotation(annotation, ax=ax1, time=True, legend=True)
+        ax1.set_title("Speaker Diarization Timeline")
         plt.tight_layout()
-        os.makedirs("plots", exist_ok=True)
         plot_path = os.path.join("plots", "diarization_timeline.png")
         plt.savefig(plot_path, dpi=150)
-        plt.close(fig)
+        plt.close(fig1)
+        
+        # Plot 2: Speaker Clusters (PCA)
+        if len(embeddings) >= 3: # Need at least 3 points for a convex hull in some cases, but 2 for PCA
+            print("Generating speaker cluster visualization...", flush=True)
+            pca = PCA(n_components=2)
+            embeddings_2d = pca.fit_transform(np.array(embeddings))
+            
+            fig2, ax2 = plt.subplots(figsize=(10, 8))
+            colors = ['#4C72B0', '#C44E52'] # Blue and Red/Pinkish
+            
+            for label_id in range(2):
+                idx = np.where(labels == label_id)[0]
+                if len(idx) == 0: continue
+                
+                points = embeddings_2d[idx]
+                ax2.scatter(points[:, 0], points[:, 1], c=colors[label_id], 
+                           label=f"Speaker {label_id + 1}", s=50, edgecolors='white', alpha=0.8)
+                
+                # Draw Convex Hull if there are enough points
+                if len(points) >= 3:
+                    try:
+                        hull = ConvexHull(points)
+                        for simplex in hull.simplices:
+                            ax2.plot(points[simplex, 0], points[simplex, 1], color=colors[label_id], linestyle='--', alpha=0.6)
+                        
+                        # Add label in the middle of the cluster
+                        center = np.mean(points, axis=0)
+                        ax2.text(center[0], center[1], f"SPEAKER {label_id + 1}", 
+                                fontsize=12, fontweight='bold', ha='center', va='center',
+                                bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
+                    except:
+                        pass # Hull might fail for collinear points
+            
+            ax2.set_title("Speaker Diarization Clusters (PCA Visualization)")
+            ax2.set_xlabel("PCA component 1")
+            ax2.set_ylabel("PCA component 2")
+            ax2.legend()
+            ax2.grid(True, linestyle=':', alpha=0.6)
+            
+            cluster_plot_path = os.path.join("plots", "speaker_clusters.png")
+            plt.savefig(cluster_plot_path, dpi=200, bbox_inches='tight')
+            plt.close(fig2)
+            print(f"Cluster plot saved to {cluster_plot_path}", flush=True)
+
     except Exception as e:
-        print(f"Failed to plot diarization: {e}")
+        print(f"Failed to plot diarization: {e}", flush=True)
 
     return {
         "segments": segments,
         "transcript": format_diarized_transcript(segments),
-        "plot_path": plot_path
+        "plot_path": plot_path,
+        "cluster_plot_path": cluster_plot_path
     }
